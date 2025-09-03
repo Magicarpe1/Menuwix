@@ -31,7 +31,8 @@
 
   <script>
   // ====== CONFIG ======
-  const ENDPOINT = "https://script.google.com/a/macros/lakolo.fr/s/AKfycbxwaO5PB0nLuXcoLE2yZN_EX2jj-qI8VO0B25txjeuZSA0qS0I0oJuxaYo87_2OaZsi_g/exec";
+  // ⚠️ URL PUBLIQUE (sans /a/macros/lakolo.fr/) :
+  const ENDPOINT = "https://script.google.com/macros/s/AKfycbxwaO5PB0nLuXcoLE2yZN_EX2jj-qI8VO0B25txjeuZSA0qS0I0oJuxaYo87_2OaZsi_g/exec";
   const WIDGET_PATH = "./assets/_website-element-widget.html";
 
   const params = new URLSearchParams(location.search);
@@ -51,7 +52,7 @@
   function toast(msg, ok=true){
     const t = document.getElementById('toast');
     t.className = ok ? 'ok' : 'err';
-    t.id = 'toast'; // garder l'id
+    t.id = 'toast';
     t.textContent = msg;
     t.style.display = 'block';
     setTimeout(()=> t.style.display='none', 4500);
@@ -60,7 +61,7 @@
   function snapshotInnerHtml(innerDoc){
     const doc = innerDoc.documentElement.cloneNode(true);
 
-    // Mettre les valeurs saisies dans les attributs pour l’impression
+    // Remonter les valeurs saisies
     doc.querySelectorAll('input, textarea, select').forEach(el => {
       const t = el.tagName;
       if (t === 'TEXTAREA') { el.textContent = el.value || ''; }
@@ -76,7 +77,7 @@
       }
     });
 
-    // <base> pour chemins relatifs + CSS impression
+    // <base> + CSS impression
     const head = doc.querySelector('head') || doc.firstElementChild;
     if (head){
       const base = doc.createElement('base');
@@ -86,10 +87,10 @@
       style.textContent = `
         @page{size:A4;margin:12mm}
         *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-        /* === Si tu veux n'imprimer QUE le récap :
+        /* Pour n'imprimer QUE le récap, dé-commenter :
         body *{display:none!important;visibility:hidden!important}
         h1,h2,h3{display:block!important;visibility:visible!important}
-        === */
+        */
       `;
       head.appendChild(style);
     }
