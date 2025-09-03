@@ -68,10 +68,6 @@
         <style>
           @page{size:A4;margin:12mm}
           *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-          /* Pour n'imprimer que le récap, décommente :
-          body *{display:none!important;visibility:hidden!important}
-          h1,h2,h3{display:block!important;visibility:visible!important}
-          */
         </style>
       `;
       if (html.includes('</head>')) html = html.replace('</head>', inject + '</head>');
@@ -103,47 +99,45 @@
     }
   }
 
-  // ====== Envoi no-CORS (contourne les blocages du navigateur) ======
+  // ====== Envoi vers Apps Script ======
   async function sendPdf(){
     try{
       if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
       if (!iframe || !iframe.contentDocument){ toast("Iframe interne introuvable.", false); return; }
 
-      // 1) Écrit un statut dans la cellule (PING) — en no-cors
+      // 1) Ping
       try{
         await fetch(ENDPOINT, {
           method:'POST',
-          mode:'no-cors',                                      // ⬅️ important
           headers:{ 'Content-Type':'text/plain;charset=utf-8' },
           body: JSON.stringify({ action:'ping' })
         });
-        console.log('PING envoyé (no-cors)');
-      }catch(e){ console.warn('PING no-cors error', e); }
+      }catch(err){
+        console.error('PING error:', err);
+        toast('Impossible de joindre Apps Script. Vérifie ENDPOINT /exec.', false);
+        return;
+      }
 
-      // 2) Capture HTML
+      // 2) Capture HTML + baseUrl
       const html = snapshotInnerHtml(iframe.contentDocument);
+      const base = iframe.contentDocument.location.href.replace(/[^\/]*$/, '');
 
-      // 3) Envoi du HTML en no-cors : on ne lit PAS la réponse,
-      //    mais Apps Script va écrire AA/AB.
+      // 3) Envoi htmlToPdf
       await fetch(ENDPOINT, {
         method:'POST',
-        mode:'no-cors',                                        // ⬅️ important
         headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action:'htmlToPdf', row, html })
+        body: JSON.stringify({ action:'htmlToPdf', row, html, base })
       });
 
-      // 4) Notif utilisateur (le PDF apparaît dans le Sheet)
-      toast('Envoi déclenché ✔ — vérifie la colonne AA (lien) / AB (statut).');
-      console.log('htmlToPdf envoyé (no-cors)');
-
+      // 4) Notif utilisateur
+      toast('Envoi déclenché ✔ — vérifie la colonne AA/AB (PDF généré).');
     }catch(err){
       console.error('sendPdf fatal:', err);
       toast('Erreur JS: ' + err.message, false);
     }
   }
 
-  console.log("ENDPOINT utilisé:", ENDPOINT);
-  document.getElementById("sendBtn").addEventListener("click", sendPdf);
+  document.getElementById('sendBtn').addEventListener('click', sendPdf);
   </script>
 </body>
 </html>
