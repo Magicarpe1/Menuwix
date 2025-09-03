@@ -1,53 +1,148 @@
-<!DOCTYPE html>
+mkdir lakolo-partenaire && cd lakolo-partenaire
+git init
+cat > index.html <<'EOF'
+<!doctype html>
 <html lang="fr">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Menu</title>
-    <style>
-        .menu-jour {
-            margin-bottom: 20px;
-        }
-        .menu-type {
-            margin-left: 20px;
-        }
-    </style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Fiche récap – Partenaire</title>
+  <style>
+    body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:0;padding:24px;line-height:1.4;background:#f7f7f9}
+    .card{max-width:960px;margin:0 auto;background:#fff;border-radius:14px;box-shadow:0 6px 24px rgba(0,0,0,.08);padding:24px}
+    h1{margin:0 0 8px}
+    .grid{display:grid;grid-template-columns:repeat(12,1fr);gap:12px}
+    .col-6{grid-column:span 6}.col-12{grid-column:span 12}
+    label{font-size:12px;color:#555;display:block;margin-bottom:6px}
+    input,textarea{width:100%;padding:10px 12px;border:1px solid #ddd;border-radius:10px;background:#fff}
+    textarea{min-height:120px}
+    button{appearance:none;border:0;border-radius:12px;padding:12px 18px;cursor:pointer;font-weight:600}
+    .primary{background:#111;color:#fff}
+    .row{display:flex;gap:12px;align-items:center}
+    .note{font-size:12px;color:#777}
+    .ok{background:#e8fff2;border:1px solid #b7f0cf;padding:8px 12px;border-radius:10px}
+    .err{background:#ffecec;border:1px solid #ffc8c8;padding:8px 12px;border-radius:10px}
+  </style>
 </head>
 <body>
-    <div id="menu-container"></div>
+  <div class="card">
+    <h1>Fiche récap – Partenaire</h1>
+    <p class="note">Préremplissage possible via paramètres d’URL (ex: <code>?societe=Acme&contact=Jane</code>).</p>
 
-    <script>
-        // Remplacez l'URL ci-dessous par le lien direct vers votre fichier JSON hébergé
-        const jsonUrl = 'https://0ba0c47b-a87b-44c8-a483-cd0748542559.usrfiles.com/ugd/0ba0c4_82d7cbe000d3440386eca637ed756fee.json';
+    <form id="f">
+      <div class="grid">
+        <div class="col-6">
+          <label>Société partenaire</label>
+          <input name="societe" id="societe" required>
+        </div>
+        <div class="col-6">
+          <label>Contact (Nom Prénom)</label>
+          <input name="contact" id="contact" required>
+        </div>
+        <div class="col-6">
+          <label>Email partenaire</label>
+          <input type="email" name="email" id="email" required>
+        </div>
+        <div class="col-6">
+          <label>Téléphone</label>
+          <input name="tel" id="tel">
+        </div>
+        <div class="col-12">
+          <label>Intitulé de la prestation</label>
+          <input name="intitule" id="intitule" required>
+        </div>
+        <div class="col-6">
+          <label>Lieu</label>
+          <input name="lieu" id="lieu">
+        </div>
+        <div class="col-6">
+          <label>Date & heure</label>
+          <input type="datetime-local" name="dateheure" id="dateheure">
+        </div>
+        <div class="col-6">
+          <label>Total HT (€)</label>
+          <input type="number" step="0.01" name="total_ht" id="total_ht">
+        </div>
+        <div class="col-3">
+          <label>TVA (%)</label>
+          <input type="number" step="0.01" name="tva" id="tva" value="20">
+        </div>
+        <div class="col-3">
+          <label>Remise (%)</label>
+          <input type="number" step="0.01" name="remise" id="remise" value="0">
+        </div>
+        <div class="col-12">
+          <label>Détail / Notes</label>
+          <textarea name="notes" id="notes"></textarea>
+        </div>
+      </div>
 
-        fetch(jsonUrl)
-            .then(response => response.json())
-            .then(data => {
-                afficherMenu(data);
-            })
-            .catch(error => console.error('Erreur lors du chargement des données du menu:', error));
+      <div style="height:12px"></div>
+      <div class="row">
+        <button class="primary" type="submit">Envoyer au Sheet</button>
+        <button type="button" id="btnPdf">Générer PDF maintenant</button>
+      </div>
+      <div style="height:12px"></div>
+      <div id="msg"></div>
+    </form>
+  </div>
 
-        function afficherMenu(data) {
-            let htmlContent = '';
+  <script>
+    // Préremplissage depuis l’URL
+    const params = new URLSearchParams(location.search);
+    ["societe","contact","email","tel","intitule","lieu","dateheure","total_ht","tva","remise","notes"]
+      .forEach(k => { if(params.has(k)) document.getElementById(k).value = params.get(k); });
 
-            data.forEach(jour => {
-                htmlContent += <div class="menu-jour"><h2>${jour.Date}</h2>;
+    // ⚠️ RENSEIGNE TON URL d’Apps Script déployé en Web App :
+    const ENDPOINT = "PASTE_YOUR_APPS_SCRIPT_WEBAPP_URL_HERE";
 
-                ['Menu Mer', 'Menu Terre', 'Menu Veggie', 'Menu Végan'].forEach(menuType => {
-                    if (jour[menuType]) {
-                        htmlContent += <div class="menu-type"><h3>${menuType}</h3>;
-                        htmlContent += <p>Entrée : ${jour[menuType].Entrée || 'Non disponible'}</p>;
-                        htmlContent += <p>Plat : ${jour[menuType].Plat || 'Non disponible'}</p>;
-                        htmlContent += <p>Dessert : ${jour[menuType].Dessert || 'Non disponible'}</p>;
-                        htmlContent += </div>;
-                    }
-                });
+    async function postTo(endpoint, payload){
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: {"Content-Type":"application/json"},
+        body: JSON.stringify(payload)
+      });
+      if(!res.ok) throw new Error(await res.text());
+      return res.json();
+    }
 
-                htmlContent += </div>;
-            });
+    function formData(){
+      const fd = new FormData(document.getElementById("f"));
+      return Object.fromEntries(fd.entries());
+    }
 
-            document.getElementById('menu-container').innerHTML = htmlContent;
-        }
-    </script>
+    function flash(html, cls="ok"){
+      const msg = document.getElementById("msg");
+      msg.className = cls;
+      msg.innerHTML = html;
+    }
+
+    document.getElementById("f").addEventListener("submit", async (e)=>{
+      e.preventDefault();
+      try{
+        const data = formData();
+        data.action = "saveRow"; // écrit la ligne dans le Sheet
+        const out = await postTo(ENDPOINT, data);
+        flash(`✅ Ligne enregistrée. ID: <b>${out.rowId}</b> – <a href="${out.sheetUrl}" target="_blank">Ouvrir le Sheet</a>`);
+      }catch(err){ flash("❌ "+err.message, "err"); }
+    });
+
+    document.getElementById("btnPdf").addEventListener("click", async ()=>{
+      try{
+        const data = formData();
+        data.action = "saveRowAndPdf"; // écrit + génère le PDF
+        const out = await postTo(ENDPOINT, data);
+        const pdfLink = out.pdfUrl ? `<a href="${out.pdfUrl}" target="_blank">Télécharger le PDF</a>` : "";
+        flash(`✅ Fait. Ligne: <b>${out.rowId}</b>. ${pdfLink}`, "ok");
+      }catch(err){ flash("❌ "+err.message, "err"); }
+    });
+  </script>
 </body>
 </html>
+EOF
+
+git add .
+git commit -m "Init fiche partenaire"
+# Crée le repo sur GitHub puis :
+git remote add origin git@github.com:TON_COMPTE/lakolo-partenaire.git
+git push -u origin main
