@@ -1,107 +1,35 @@
-<!doctype html>
-<html lang="fr">
+<!DOCTYPE html>
+<html dir="ltr" lang="fr-FR" class="theme light">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>Fiche récap – Partenaire (LA KOLO)</title>
-  <style>
-    body{margin:0;font-family:system-ui,-apple-system,Segoe 
-UI,Roboto,Arial,sans-serif}
-    .wrap{display:grid;grid-template-columns:1fr 420px;min-height:100vh}
-    iframe{width:100%;height:100vh;border:0;background:#fff}
-    .panel{padding:16px;box-shadow:-1px 0 0 #eee}
-    h1{font-size:18px;margin:0 0 12px}
-    label{font-size:12px;color:#555;display:block;margin:10px 0 4px}
-    input,textarea{width:100%;padding:10px 12px;border:1px solid 
-#ddd;border-radius:10px}
-    button{border:0;border-radius:10px;padding:12px 
-16px;cursor:pointer;font-weight:700}
-    .primary{background:#111;color:#fff;width:100%;margin-top:12px}
-    .msg{margin-top:10px;font-size:13px}
-    .ok{background:#e8fff2;border:1px solid 
-#b7f0cf;padding:8px;border-radius:8px}
-    .err{background:#ffecec;border:1px solid 
-#ffc8c8;padding:8px;border-radius:8px}
-    .hint{font-size:12px;color:#777}
-  </style>
+  <meta charset="utf-8">
+  <base href=".">
+  <title>Fiche récapitulative pour prestations de services</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+
+  <link href="./_assets/a0684b0780c739e9.vendor.ltr.css" rel="stylesheet">
+  <link href="./_assets/d9814184d4cd0bfc.ltr.css" rel="stylesheet">
+  <link href="./_assets/static_font_4.ltr.css" rel="stylesheet">
+  <link rel="preload" href="./_assets/8bfec5dcf28155ec.runtime.js" as="script">
+  <link rel="preload" href="./_assets/8b151872c2943599.s4le6a.vendor.js" as="script">
+  <link rel="preload" href="./_assets/9387c6b85eab150d.vendor.js" as="script">
+  <link rel="preload" href="./_assets/685e55791f91299b.strings.js" as="script">
+  <link rel="preload" href="./_assets/69e96395585648d2.fr-FR.js" as="script">
+  <link rel="preload" href="./_assets/c5e927179e26e681.js" as="script">
 </head>
-<body>
-  <div class="wrap">
-    <!-- Aperçu du modèle Canva -->
-    <iframe src="./template.html"></iframe>
+<body style="margin:0;background:#fff">
+  <!-- ton layout Canva… -->
+  <iframe
+    src="./_assets/_website-element-widget.html"
+    width="1366" height="768" frameborder="0"
+    sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-popups-to-escape-sandbox"
+    style="width:100%;height:100vh;border:0"
+    title="Contenu intégré"></iframe>
 
-    <!-- Formulaire -->
-    <div class="panel">
-      <h1>Fiche partenaire</h1>
-      <div class="hint">Préremplie depuis le Google Sheet.</div>
-      <form id="f">
-        <label>Société</label><input name="societe" id="societe" required>
-        <label>Contact</label><input name="contact" id="contact" required>
-        <label>Email</label><input type="email" name="email" id="email" 
-required>
-        <label>Téléphone</label><input name="tel" id="tel">
-        <label>Intitulé</label><input name="intitule" id="intitule" 
-required>
-        <label>Lieu</label><input name="lieu" id="lieu">
-        <label>Date & heure</label><input type="datetime-local" 
-name="dateheure" id="dateheure">
-        <label>Total HT (€)</label><input type="number" step="0.01" 
-name="total_ht" id="total_ht">
-        <label>TVA (%)</label><input type="number" step="0.01" name="tva" 
-id="tva" value="20">
-        <label>Remise (%)</label><input type="number" step="0.01" 
-name="remise" id="remise" value="0">
-        <label>Notes</label><textarea name="notes" id="notes"></textarea>
-
-        <input type="hidden" id="row" name="row">
-
-        <button class="primary" type="submit">Envoyer PDF au Google 
-Sheet</button>
-        <div id="msg" class="msg"></div>
-      </form>
-    </div>
-  </div>
-
-  <script>
-    // Préremplissage via l'URL (?societe=... etc.)
-    const p = new URLSearchParams(location.search);
-    const ids = 
-["societe","contact","email","tel","intitule","lieu","dateheure","total_ht","tva","remise","notes","row"];
-    for(const id of ids){ if(p.has(id)) document.getElementById(id).value 
-= p.get(id); }
-
-    // 👉 Mets ici l’URL de ton Web App Apps Script
-    const ENDPOINT = "https://script.google.com/a/macros/lakolo.fr/s/AKfycbxwaO5PB0nLuXcoLE2yZN_EX2jj-qI8VO0B25txjeuZSA0qS0I0oJuxaYo87_2OaZsi_g/exec";
-    const TEMPLATE_URL_RAW = location.origin + 
-location.pathname.replace(/index\.html?$/,"") + "template.html";
-
-    function flash(html, cls="ok"){
-      const m = document.getElementById("msg");
-      m.className = "msg " + cls;
-      m.innerHTML = html;
-    }
-
-    document.getElementById("f").addEventListener("submit", async (e)=>{
-      e.preventDefault();
-      const data = Object.fromEntries(new FormData(e.target).entries());
-      data.action = "generatePdfFromGithub";
-      data.templateUrl = TEMPLATE_URL_RAW;
-      try{
-        const res = await fetch(ENDPOINT, {
-          method: "POST",
-          headers: {"Content-Type":"application/json"},
-          body: JSON.stringify(data)
-        });
-        const out = await res.json();
-        if(!res.ok || !out.ok) throw new Error(out.error || "Erreur 
-inconnue");
-        flash(`✅ PDF créé. <a target="_blank" href="${out.pdfUrl}">Ouvrir 
-le PDF</a>`);
-      }catch(err){
-        flash("❌ " + err.message, "err");
-      }
-    });
-  </script>
+  <script src="./_assets/8bfec5dcf28155ec.runtime.js" defer></script>
+  <script src="./_assets/8b151872c2943599.s4le6a.vendor.js" defer></script>
+  <script src="./_assets/9387c6b85eab150d.vendor.js" defer></script>
+  <script src="./_assets/685e55791f91299b.strings.js"></script>
+  <script src="./_assets/69e96395585648d2.fr-FR.js"></script>
+  <script src="./_assets/c5e927179e26e681.js" defer></script>
 </body>
 </html>
-
