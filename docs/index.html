@@ -113,7 +113,7 @@
       try{
         const ping = await fetch(ENDPOINT, {
           method:'POST',
-          headers:{ 'Content-Type':'text/plain;charset=utf-8' },   // ⬅️ important
+          headers:{ 'Content-Type':'text/plain;charset=utf-8' },
           body: JSON.stringify({ action:'ping' })
         });
         console.log('PING status:', ping.status);
@@ -134,7 +134,7 @@
       // 3) Envoi en text/plain (évite le preflight)
       const res = await fetch(ENDPOINT, {
         method:'POST',
-        headers:{ 'Content-Type':'text/plain;charset=utf-8' },     // ⬅️ important
+        headers:{ 'Content-Type':'text/plain;charset=utf-8' },
         body: JSON.stringify({ action:'htmlToPdf', row, html })
       });
 
