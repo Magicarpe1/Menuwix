@@ -2,29 +2,20 @@
 <html lang="fr">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <base href=".">
-  <title>Fiche récapitulative – LA KOLO</title>
+  <title>Fiche – miroir Canva</title>
   <style>
-    /* Plein écran propre */
-    html, body { height: 100%; margin: 0; background: #fff; }
-    .wrap { position: fixed; inset: 0; }
-    iframe { width: 100%; height: 100%; border: 0; display: block; }
+    html,body{height:100%;margin:0;background:#fff}
+    iframe{position:fixed;inset:0;border:0;width:100%;height:100%}
   </style>
 </head>
 <body>
-  <!-- On affiche le widget Canva local tel quel (il embarque son propre CSS/JS) -->
-  <div class="wrap">
-    <iframe
-      src="./assets/_website-element-widget.html"
-      sandbox="allow-same-origin allow-scripts allow-popups allow-forms allow-popups-to-escape-sandbox"
-      allow="clipboard-write *; clipboard-read *"
-      title="Fiche récapitulative"
-    ></iframe>
-  </div>
-
-  <noscript>
-    Active JavaScript pour afficher la fiche.
-  </noscript>
+  <!-- ⚠️ Chemin EXACT vers ton export Canva -->
+  <iframe
+    src="./assets/_website-element-widget.html"
+    sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+    title="Fiche Canva"
+  ></iframe>
 </body>
 </html>
