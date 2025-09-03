@@ -8,29 +8,25 @@
 
   function getRow() {
     const here = new URLSearchParams(location.search).get('row');
-    if (here) return Number(here);
+    if (here) return +here;
     try {
       const up = new URLSearchParams(parent?.location?.search || '').get('row');
-      return up ? Number(up) : 0;
+      return up ? +up : 0;
     } catch { return 0; }
   }
 
-  // === 1) Récupère l’IFRAME INTERNE qui contient ta fiche et le bouton
   function getInnerFrame() {
-    // dans ton fichier, l’iframe a src="./saved_resource.html"
-    const fr = document.querySelector('iframe[src*="saved_resource"]');
-    return fr && fr.contentWindow ? fr : null;
+    return document.querySelector('iframe[src*="saved_resource"]');
   }
 
-  // === 2) Crée le snapshot HTML du DOCUMENT DE L’IFRAME (pas du parent)
   function snapshotInnerHtml(innerDoc) {
     const doc = innerDoc.documentElement.cloneNode(true);
 
-    // Remonte les valeurs des formulaires dans le DOM (pour l’impression)
+    // remonte les valeurs saisies
     doc.querySelectorAll('input, textarea, select').forEach(el => {
-      const tag = el.tagName;
-      if (tag === 'TEXTAREA') { el.textContent = el.value || ''; }
-      else if (tag === 'SELECT') {
+      const t = el.tagName;
+      if (t === 'TEXTAREA') el.textContent = el.value || '';
+      else if (t === 'SELECT') {
         el.setAttribute('value', el.value || '');
         const sel = el.options[el.selectedIndex];
         if (sel) el.setAttribute('data-selected-text', sel.text);
@@ -42,85 +38,98 @@
       }
     });
 
-    // Ajoute <base> pour que tous les chemins relatifs de l’IFRAME restent valides
+    // base + CSS impression (ne garder que la section récap si besoin)
     const head = doc.querySelector('head') || doc.firstElementChild;
     if (head) {
       const base = doc.createElement('base');
-      base.setAttribute('href', innerDoc.location.href.replace(/[^\/]*$/, '')); // dossier de l’iframe
+      base.setAttribute('href', innerDoc.location.href.replace(/[^\/]*$/, ''));
       head.prepend(base);
-
-      // Impression : ne garder que la section "RÉCAPITULATIF DE PRESTATION"
       const style = doc.createElement('style');
       style.textContent = `
         @page{size:A4;margin:12mm}
         *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
         /* masque tout par défaut */
-        body *{display:none !important;visibility:hidden !important}
-        /* montre uniquement le bloc récap (repéré par son titre) */
-        h1,h2,h3{display:block !important;visibility:visible !important}
+        /* body *{display:none!important;visibility:hidden!important}
+        h1,h2,h3{display:block!important;visibility:visible!important} */
       `;
       head.appendChild(style);
     }
 
-    // Retire les <script> (plus propre pour la conversion PDF)
+    // nettoie scripts
     doc.querySelectorAll('script').forEach(s => s.remove());
-
-    // Si tu veux verrouiller sur un conteneur précis, on peut ajouter un ID ici.
 
     return '<!DOCTYPE html>' + doc.outerHTML;
   }
 
   async function sendPdf() {
     const row = getRow();
-    if (!row || row < 2) { alert('Paramètre ?row manquant (ouvre la fiche depuis la colonne Y).'); return; }
+    if (!row || row < 2) { alert('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.'); return; }
 
-    const inner = getInnerFrame();
-    if (!inner) { alert("Iframe interne introuvable."); return; }
+    const fr = getInnerFrame();
+    if (!fr || !fr.contentDocument) { alert("Iframe interne introuvable."); return; }
 
-    const html = snapshotInnerHtml(inner.contentDocument);
+    const html = snapshotInnerHtml(fr.contentDocument);
 
-    const payload = { action: 'htmlToPdf', row, html };
+    // LOGS visibles dans la console
+    console.log('POST →', ENDPOINT, { action:'htmlToPdf', row, htmlLength: html.length });
 
     const res = await fetch(ENDPOINT, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload)
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ action:'htmlToPdf', row, html })
     });
     let out = {};
-    try { out = await res.json(); } catch(e) {}
+    try { out = await res.json(); } catch(e) { console.warn('No JSON response', e); }
+    console.log('Response ←', res.status, out);
+
     if (!res.ok || !out.ok) {
       alert('Erreur génération PDF : ' + (out.error || res.status));
       return;
     }
     if (out.pdfUrl) window.open(out.pdfUrl, '_blank');
-    console.log('PDF généré →', out.pdfUrl);
+    alert('PDF généré ✔ (voir colonne AA)');
   }
 
-  // === 3) Se brancher sur LE BOUTON dans l’IFRAME
+  // 1) Bouton overlay “secours” pour déclenchement certain
+  function injectOverlayButton() {
+    const btn = document.createElement('button');
+    btn.textContent = '📄 Envoyer au Sheet';
+    Object.assign(btn.style, {
+      position:'fixed', right:'12px', bottom:'12px', zIndex:'999999',
+      padding:'10px 14px', border:'0', borderRadius:'10px',
+      background:'#111', color:'#fff', fontWeight:'700', cursor:'pointer',
+      boxShadow:'0 6px 20px rgba(0,0,0,.18)'
+    });
+    btn.addEventListener('click', sendPdf);
+    document.body.appendChild(btn);
+  }
+
+  // 2) Accroche aussi le bouton “Générer récapitulatif” à l’intérieur de l’iframe
   function attachInside(innerDoc) {
-    const candidates = Array.from(innerDoc.querySelectorAll('button, a, [role="button"]'));
+    const candidates = Array.from(innerDoc.querySelectorAll('button,a,[role="button"]'));
     const btn = candidates.find(el => /g[ée]n[ée]rer\s+r[ée]cap/i.test((el.textContent||'').trim()));
     if (btn) {
-      btn.addEventListener('click', () => setTimeout(sendPdf, 200), { passive: true });
+      btn.addEventListener('click', () => setTimeout(sendPdf, 250), { passive:true });
+      console.log('Listener attaché au bouton CANVA');
       return true;
     }
     return false;
   }
 
   function boot() {
+    injectOverlayButton(); // toujours disponible
+
     const fr = getInnerFrame();
     if (!fr) {
-      // observe jusqu’à ce que l’iframe apparaisse
       const obs = new MutationObserver(() => {
         const f2 = getInnerFrame();
-        if (f2) { obs.disconnect(); f2.addEventListener('load', () => attachInside(f2.contentDocument)); }
+        if (f2) { obs.disconnect(); f2.addEventListener('load', () => attachInside(f2.contentDocument) || console.log('en attente du bouton...')); }
       });
       obs.observe(document.documentElement, { childList:true, subtree:true });
       return;
     }
-    // attache une fois l’iframe chargée
     if (fr.contentDocument && fr.contentDocument.readyState !== 'loading') {
-      attachInside(fr.contentDocument) || new MutationObserver((m, o)=>{
+      attachInside(fr.contentDocument) || new MutationObserver((m,o)=>{
         if (attachInside(fr.contentDocument)) o.disconnect();
       }).observe(fr.contentDocument, { childList:true, subtree:true });
     } else {
