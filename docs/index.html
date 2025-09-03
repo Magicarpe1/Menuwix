@@ -31,7 +31,7 @@
 
   <script>
   // ====== CONFIG ======
-  // ⚠️ URL PUBLIQUE (sans /a/macros/lakolo.fr/) :
+  // ⚠️ COLLE ICI L’URL PUBLIQUE /exec (sans /a/macros/lakolo.fr/)
   const ENDPOINT = "https://script.google.com/macros/s/AKfycbxwaO5PB0nLuXcoLE2yZN_EX2jj-qI8VO0B25txjeuZSA0qS0I0oJuxaYo87_2OaZsi_g/exec";
   const WIDGET_PATH = "./assets/_website-element-widget.html";
 
@@ -58,63 +58,82 @@
     setTimeout(()=> t.style.display='none', 4500);
   }
 
+  // Snapshot robuste (base + CSS impression + valeurs saisies)
   function snapshotInnerHtml(innerDoc){
-    const doc = innerDoc.documentElement.cloneNode(true);
-
-    // Remonter les valeurs saisies
-    doc.querySelectorAll('input, textarea, select').forEach(el => {
-      const t = el.tagName;
-      if (t === 'TEXTAREA') { el.textContent = el.value || ''; }
-      else if (t === 'SELECT') {
-        el.setAttribute('value', el.value || '');
-        const sel = el.options[el.selectedIndex];
-        if (sel) el.setAttribute('data-selected-text', sel.text);
-      } else {
-        el.setAttribute('value', el.value || '');
-        if (el.type === 'checkbox' || el.type === 'radio') {
-          if (el.checked) el.setAttribute('checked','checked'); else el.removeAttribute('checked');
-        }
-      }
-    });
-
-    // <base> + CSS impression
-    const head = doc.querySelector('head') || doc.firstElementChild;
-    if (head){
-      const base = doc.createElement('base');
-      base.setAttribute('href', innerDoc.location.href.replace(/[^\/]*$/,''));
-      head.prepend(base);
-      const style = doc.createElement('style');
-      style.textContent = `
-        @page{size:A4;margin:12mm}
-        *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-        /* Pour n'imprimer QUE le récap, dé-commenter :
-        body *{display:none!important;visibility:hidden!important}
-        h1,h2,h3{display:block!important;visibility:visible!important}
-        */
+    try{
+      let html = '<!DOCTYPE html>' + innerDoc.documentElement.outerHTML;
+      const baseHref = innerDoc.location.href.replace(/[^\/]*$/,'');
+      const inject = `
+        <base href="${baseHref}">
+        <style>
+          @page{size:A4;margin:12mm}
+          *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+          /* Pour n'imprimer que le récap, décommente :
+          body *{display:none!important;visibility:hidden!important}
+          h1,h2,h3{display:block!important;visibility:visible!important}
+          */
+        </style>
       `;
-      head.appendChild(style);
+      if (html.includes('</head>')) html = html.replace('</head>', inject + '</head>');
+      else html = html.replace('<html', '<html><head>'+inject+'</head>');
+
+      try{
+        const inputs = innerDoc.querySelectorAll('input,textarea,select');
+        inputs.forEach(el => {
+          if (el.tagName==='TEXTAREA') el.textContent = el.value || '';
+          else if (el.tagName==='SELECT') {
+            el.setAttribute('value', el.value || '');
+            const sel = el.options[el.selectedIndex];
+            if (sel) el.setAttribute('data-selected-text', sel.text);
+          } else {
+            el.setAttribute('value', el.value || '');
+            if (el.type==='checkbox'||el.type==='radio'){
+              if (el.checked) el.setAttribute('checked','checked'); else el.removeAttribute('checked');
+            }
+          }
+        });
+        html = '<!DOCTYPE html>' + innerDoc.documentElement.outerHTML;
+        if (html.includes('</head>')) html = html.replace('</head>', inject + '</head>');
+      }catch(e){ console.warn('Remontée des valeurs :', e); }
+
+      return html;
+    }catch(e){
+      console.error('snapshotInnerHtml error:', e);
+      return '<!DOCTYPE html>' + innerDoc.documentElement.outerHTML;
     }
-
-    // Retirer scripts
-    doc.querySelectorAll('script').forEach(s => s.remove());
-
-    return '<!DOCTYPE html>' + doc.outerHTML;
   }
 
   async function sendPdf(){
-    if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
-    const fr = iframe;
-    if (!fr || !fr.contentDocument){ toast("Iframe interne introuvable.", false); return; }
-
-    const html = snapshotInnerHtml(fr.contentDocument);
-
-    console.log('POST →', ENDPOINT, {action:'htmlToPdf', row, htmlLength: html.length});
     try{
+      if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
+      if (!iframe || !iframe.contentDocument){ toast("Iframe interne introuvable.", false); return; }
+
+      // Ping pour vérifier l’accès
+      try{
+        const ping = await fetch(ENDPOINT, {
+          method:'POST', headers:{'Content-Type':'application/json'},
+          body: JSON.stringify({action:'ping'})
+        });
+        console.log('PING status:', ping.status);
+        if (ping.status === 401 || ping.status === 403) {
+          toast('Web App non public (401/403). Déploie : "Moi" + "Tout le monde".', false);
+          return;
+        }
+      }catch(err){
+        console.error('PING error:', err);
+        toast('Impossible de joindre Apps Script. Vérifie ENDPOINT /exec.', false);
+        return;
+      }
+
+      const html = snapshotInnerHtml(iframe.contentDocument);
+      console.log('POST →', ENDPOINT, {action:'htmlToPdf', row, htmlLength: html.length});
+
       const res = await fetch(ENDPOINT, {
         method:'POST',
         headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ action:'htmlToPdf', row, html })
       });
+
       let out={}; try{ out = await res.json(); }catch(e){ console.warn('No JSON', e); }
       console.log('Response ←', res.status, out);
 
@@ -122,12 +141,11 @@
       if (out.pdfUrl) window.open(out.pdfUrl, '_blank');
       toast('PDF généré ✔ (voir colonne AA)');
     }catch(err){
-      console.error(err);
-      toast('Erreur réseau: '+err.message, false);
+      console.error('sendPdf fatal:', err);
+      toast('Erreur JS: '+err.message, false);
     }
   }
   console.log("ENDPOINT utilisé:", ENDPOINT);
-
   document.getElementById('sendBtn').addEventListener('click', sendPdf);
   </script>
 </body>
