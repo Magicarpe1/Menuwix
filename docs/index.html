@@ -103,17 +103,18 @@
     }
   }
 
+  // ====== TA VERSION avec ping + envoi en text/plain (pas de preflight) ======
   async function sendPdf(){
     try{
       if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
       if (!iframe || !iframe.contentDocument){ toast("Iframe interne introuvable.", false); return; }
 
-      // Ping pour vérifier l’accès (en text/plain pour éviter le preflight)
+      // 1) Ping en text/plain (évite le preflight)
       try{
         const ping = await fetch(ENDPOINT, {
           method:'POST',
-          headers:{'Content-Type':'text/plain;charset=utf-8'},
-          body: JSON.stringify({action:'ping'})
+          headers:{ 'Content-Type':'text/plain;charset=utf-8' },   // ⬅️ important
+          body: JSON.stringify({ action:'ping' })
         });
         console.log('PING status:', ping.status);
         if (ping.status === 401 || ping.status === 403) {
@@ -126,25 +127,27 @@
         return;
       }
 
+      // 2) Capture HTML
       const html = snapshotInnerHtml(iframe.contentDocument);
-      console.log('POST →', ENDPOINT, {action:'htmlToPdf', row, htmlLength: html.length});
+      console.log('POST →', ENDPOINT, { action:'htmlToPdf', row, htmlLength: html.length });
 
-      // Envoi du HTML en text/plain pour éviter le preflight (CORS)
+      // 3) Envoi en text/plain (évite le preflight)
       const res = await fetch(ENDPOINT, {
         method:'POST',
-        headers:{'Content-Type':'text/plain;charset=utf-8'},
+        headers:{ 'Content-Type':'text/plain;charset=utf-8' },     // ⬅️ important
         body: JSON.stringify({ action:'htmlToPdf', row, html })
       });
 
-      let out={}; try{ out = await res.json(); }catch(e){ console.warn('No JSON', e); }
+      let out = {};
+      try { out = await res.json(); } catch(e) { console.warn('No JSON', e); }
       console.log('Response ←', res.status, out);
 
-      if (!res.ok || !out.ok) { toast('Erreur PDF: '+(out.error || res.status), false); return; }
+      if (!res.ok || !out.ok) { toast('Erreur PDF: ' + (out.error || res.status), false); return; }
       if (out.pdfUrl) window.open(out.pdfUrl, '_blank');
       toast('PDF généré ✔ (voir colonne AA)');
     }catch(err){
       console.error('sendPdf fatal:', err);
-      toast('Erreur JS: '+err.message, false);
+      toast('Erreur JS: ' + err.message, false);
     }
   }
 
