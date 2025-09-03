@@ -4,18 +4,129 @@
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <base href=".">
-  <title>Fiche – miroir Canva</title>
+  <title>Fiche partenaire — miroir Canva</title>
   <style>
     html,body{height:100%;margin:0;background:#fff}
-    iframe{position:fixed;inset:0;border:0;width:100%;height:100%}
+    #wrap{position:fixed;inset:0}
+    #view{position:absolute;inset:0;border:0;width:100%;height:100%}
+    #sendBtn{
+      position:fixed; right:12px; bottom:12px; z-index:999999;
+      padding:10px 14px; border:0; border-radius:10px;
+      background:#111; color:#fff; font-weight:700; cursor:pointer;
+      box-shadow:0 6px 20px rgba(0,0,0,.18)
+    }
+    #toast{position:fixed; left:50%; bottom:20px; transform:translateX(-50%);
+      background:#111;color:#fff;padding:10px 14px;border-radius:8px;display:none;z-index:999999}
+    #toast.ok{background:#1a7f37} #toast.err{background:#b91c1c}
   </style>
 </head>
 <body>
-  <!-- ⚠️ Chemin EXACT vers ton export Canva -->
-  <iframe
-    src="./assets/_website-element-widget.html"
-    sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-    title="Fiche Canva"
-  ></iframe>
+  <div id="wrap">
+    <!-- On propage ?row=… vers le widget -->
+    <iframe id="view" src="" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox" title="Fiche Canva"></iframe>
+  </div>
+
+  <button id="sendBtn">📄 Envoyer au Sheet</button>
+  <div id="toast"></div>
+
+  <script>
+  // ====== CONFIG ======
+  const ENDPOINT = "https://script.google.com/a/macros/lakolo.fr/s/AKfycbxwaO5PB0nLuXcoLE2yZN_EX2jj-qI8VO0B25txjeuZSA0qS0I0oJuxaYo87_2OaZsi_g/exec";
+  const WIDGET_PATH = "./assets/_website-element-widget.html";
+
+  const params = new URLSearchParams(location.search);
+  const row = Number(params.get("row") || 0);
+  const iframe = document.getElementById("view");
+
+  // Charger le widget avec ?row=…
+  const widgetUrl = new URL(WIDGET_PATH, location.href);
+  if (row) {
+    const p = new URL(widgetUrl);
+    p.searchParams.set("row", row);
+    iframe.src = p.toString();
+  } else {
+    iframe.src = widgetUrl.toString();
+  }
+
+  function toast(msg, ok=true){
+    const t = document.getElementById('toast');
+    t.className = ok ? 'ok' : 'err';
+    t.id = 'toast'; // garder l'id
+    t.textContent = msg;
+    t.style.display = 'block';
+    setTimeout(()=> t.style.display='none', 4500);
+  }
+
+  function snapshotInnerHtml(innerDoc){
+    const doc = innerDoc.documentElement.cloneNode(true);
+
+    // Mettre les valeurs saisies dans les attributs pour l’impression
+    doc.querySelectorAll('input, textarea, select').forEach(el => {
+      const t = el.tagName;
+      if (t === 'TEXTAREA') { el.textContent = el.value || ''; }
+      else if (t === 'SELECT') {
+        el.setAttribute('value', el.value || '');
+        const sel = el.options[el.selectedIndex];
+        if (sel) el.setAttribute('data-selected-text', sel.text);
+      } else {
+        el.setAttribute('value', el.value || '');
+        if (el.type === 'checkbox' || el.type === 'radio') {
+          if (el.checked) el.setAttribute('checked','checked'); else el.removeAttribute('checked');
+        }
+      }
+    });
+
+    // <base> pour chemins relatifs + CSS impression
+    const head = doc.querySelector('head') || doc.firstElementChild;
+    if (head){
+      const base = doc.createElement('base');
+      base.setAttribute('href', innerDoc.location.href.replace(/[^\/]*$/,''));
+      head.prepend(base);
+      const style = doc.createElement('style');
+      style.textContent = `
+        @page{size:A4;margin:12mm}
+        *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+        /* === Si tu veux n'imprimer QUE le récap :
+        body *{display:none!important;visibility:hidden!important}
+        h1,h2,h3{display:block!important;visibility:visible!important}
+        === */
+      `;
+      head.appendChild(style);
+    }
+
+    // Retirer scripts
+    doc.querySelectorAll('script').forEach(s => s.remove());
+
+    return '<!DOCTYPE html>' + doc.outerHTML;
+  }
+
+  async function sendPdf(){
+    if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
+    const fr = iframe;
+    if (!fr || !fr.contentDocument){ toast("Iframe interne introuvable.", false); return; }
+
+    const html = snapshotInnerHtml(fr.contentDocument);
+
+    console.log('POST →', ENDPOINT, {action:'htmlToPdf', row, htmlLength: html.length});
+    try{
+      const res = await fetch(ENDPOINT, {
+        method:'POST',
+        headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ action:'htmlToPdf', row, html })
+      });
+      let out={}; try{ out = await res.json(); }catch(e){ console.warn('No JSON', e); }
+      console.log('Response ←', res.status, out);
+
+      if (!res.ok || !out.ok) { toast('Erreur PDF: '+(out.error || res.status), false); return; }
+      if (out.pdfUrl) window.open(out.pdfUrl, '_blank');
+      toast('PDF généré ✔ (voir colonne AA)');
+    }catch(err){
+      console.error(err);
+      toast('Erreur réseau: '+err.message, false);
+    }
+  }
+
+  document.getElementById('sendBtn').addEventListener('click', sendPdf);
+  </script>
 </body>
 </html>
