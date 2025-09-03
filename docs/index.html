@@ -31,7 +31,7 @@
 
   <script>
   // ====== CONFIG ======
-  // ⚠️ COLLE ICI L’URL PUBLIQUE /exec (sans /a/macros/lakolo.fr/)
+  // ⚠️ URL PUBLIQUE /exec (pas la version /a/macros/…)
   const ENDPOINT = "https://script.google.com/macros/s/AKfycbxwaO5PB0nLuXcoLE2yZN_EX2jj-qI8VO0B25txjeuZSA0qS0I0oJuxaYo87_2OaZsi_g/exec";
   const WIDGET_PATH = "./assets/_website-element-widget.html";
 
@@ -108,10 +108,11 @@
       if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
       if (!iframe || !iframe.contentDocument){ toast("Iframe interne introuvable.", false); return; }
 
-      // Ping pour vérifier l’accès
+      // Ping pour vérifier l’accès (en text/plain pour éviter le preflight)
       try{
         const ping = await fetch(ENDPOINT, {
-          method:'POST', headers:{'Content-Type':'application/json'},
+          method:'POST',
+          headers:{'Content-Type':'text/plain;charset=utf-8'},
           body: JSON.stringify({action:'ping'})
         });
         console.log('PING status:', ping.status);
@@ -128,9 +129,10 @@
       const html = snapshotInnerHtml(iframe.contentDocument);
       console.log('POST →', ENDPOINT, {action:'htmlToPdf', row, htmlLength: html.length});
 
+      // Envoi du HTML en text/plain pour éviter le preflight (CORS)
       const res = await fetch(ENDPOINT, {
         method:'POST',
-        headers:{'Content-Type':'application/json'},
+        headers:{'Content-Type':'text/plain;charset=utf-8'},
         body: JSON.stringify({ action:'htmlToPdf', row, html })
       });
 
@@ -145,6 +147,7 @@
       toast('Erreur JS: '+err.message, false);
     }
   }
+
   console.log("ENDPOINT utilisé:", ENDPOINT);
   document.getElementById('sendBtn').addEventListener('click', sendPdf);
   </script>
