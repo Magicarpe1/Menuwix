@@ -19,12 +19,11 @@
       background:#111;color:#fff;padding:10px 14px;border-radius:8px;display:none;z-index:999999}
     #toast.ok{background:#1a7f37} #toast.err{background:#b91c1c}
   </style>
-  <!-- html2canvas -->
-  <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+  <!-- dom-to-image-more (styles calculés + fonts embarqués) -->
+  <script src="https://cdn.jsdelivr.net/npm/dom-to-image-more@3.2.0/dist/dom-to-image-more.min.js"></script>
 </head>
 <body>
   <div id="wrap">
-    <!-- L’export Canva (widget) est affiché dans cette iframe -->
     <iframe id="view"
             src=""
             sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
@@ -44,7 +43,7 @@
   const row    = Number(params.get("row") || 0);
   const iframe = document.getElementById("view");
 
-  // Charge l’iframe en propageant ?row=…
+  // Charge l’iframe avec ?row=…
   (function initIframe(){
     const widgetUrl = new URL(WIDGET_PATH, location.href);
     if (row) {
@@ -64,46 +63,47 @@
     setTimeout(()=> t.style.display='none', 4500);
   }
 
-  /************ Sélection de la zone récap ************/
-  function findRecapElement(doc){
-    // ID exact fourni par toi :
+  /************ Sélection stricte de la zone récap ************/
+  function getRecapEl(doc){
+    // ID exact que tu m’as donné :
     const el = doc.getElementById('recapitulatifZone');
     if (el) return el;
-    // fallback (si ID change un jour) :
+    // fallback si l’ID change un jour :
     const h = Array.from(doc.querySelectorAll('h1,h2,h3'))
       .find(e => /RÉCAPITULATIF/i.test((e.textContent || '').trim()));
     return h ? (h.parentElement || h) : doc.body;
   }
 
-  /************ Capture PNG fidèle (sans foreignObjectRendering) ************/
+  /************ Capture PNG via dom-to-image-more ************/
   async function captureRecapPNG(innerDoc){
-    const el = findRecapElement(innerDoc);
+    const el = getRecapEl(innerDoc);
     el.scrollIntoView({block:'center'});
-    await new Promise(r => setTimeout(r, 300)); // laisse le layout se stabiliser
+    await new Promise(r => setTimeout(r, 250)); // laisse le layout se stabiliser
 
     // cache le bouton overlay pendant la capture
     const btn = document.getElementById('sendBtn');
-    const prevVis = btn.style.visibility;
-    btn.style.visibility = 'hidden';
+    const prevVis = btn.style.visibility; btn.style.visibility = 'hidden';
 
     try{
-      const canvas = await html2canvas(el, {
-        backgroundColor: '#ffffff',
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        foreignObjectRendering: false  // ⬅️ évite 404 et pages blanches
+      // largeur max raisonnable pour A4 (haute qualité)
+      const scale = 2; // x2 retina-like
+      const dataUrl = await window.domtoimage.toPng(el, {
+        bgcolor: '#ffffff',
+        style: { 'transform': 'none' }, // neutralise d’éventuels transforms
+        width:  el.scrollWidth,
+        height: el.scrollHeight,
+        quality: 1,
+        // Filtre optionnel pour exclure d’éventuels éléments interactifs
+        filter: (node) => {
+          // exclure zone "no-print" s’il y en a
+          if (node.classList && node.classList.contains('no-print')) return false;
+          return true;
+        },
+        // taille “virtuelle” de rendu
+        imagePlaceholder: undefined,
+        cacheBust: true,
       });
-
-      // sécurité : si 0x0, recapture le body
-      if (!canvas.width || !canvas.height) {
-        const fallback = await html2canvas(innerDoc.body, {
-          backgroundColor: '#ffffff', scale:2, useCORS:true, allowTaint:true, foreignObjectRendering:false
-        });
-        return { dataUrl: fallback.toDataURL('image/png'), w: fallback.width, h: fallback.height };
-      }
-
-      return { dataUrl: canvas.toDataURL('image/png'), w: canvas.width, h: canvas.height };
+      return dataUrl;
     } finally {
       btn.style.visibility = prevVis || 'visible';
     }
@@ -114,22 +114,26 @@
     try{
       if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
 
-      // attendre le chargement de l’iframe si besoin
-      if (iframe.contentDocument && iframe.contentDocument.readyState === 'loading') {
+      // attendre que l’iframe soit prête
+      if (!iframe.contentDocument || iframe.contentDocument.readyState === 'loading') {
         await new Promise(r => iframe.addEventListener('load', r, {once:true}));
       }
       const doc = iframe.contentDocument;
       if (!doc) { toast("Iframe interne introuvable.", false); return; }
 
-      // 1) Capture PNG de #recapitulatifZone
-      const { dataUrl, w, h } = await captureRecapPNG(doc);
+      // 1) Capture PNG
+      const pngDataUrl = await captureRecapPNG(doc);
+      if (!pngDataUrl || !pngDataUrl.startsWith('data:image/png')) {
+        toast('Capture PNG vide — vérifie #recapitulatifZone.', false);
+        return;
+      }
 
-      // 2) Envoi en no-cors (on NE LIT PAS la réponse ; Apps Script écrit Z/AA)
+      // 2) Envoi vers Apps Script (no-cors)
       await fetch(ENDPOINT, {
         method:'POST',
-        mode:'no-cors',
+        mode:'no-cors', // on ne lit pas la réponse ; Apps Script écrit Z/AA
         headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action:'imageToPdf', row, png: dataUrl, w, h })
+        body: JSON.stringify({ action:'imageToPdf', row, png: pngDataUrl })
       });
 
       toast('Envoi déclenché ✔ — vérifie la colonne Z (lien) et AA (statut).');
@@ -143,4 +147,3 @@
   </script>
 </body>
 </html>
-
