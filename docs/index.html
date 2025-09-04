@@ -19,7 +19,7 @@
       background:#111;color:#fff;padding:10px 14px;border-radius:8px;display:none;z-index:999999}
     #toast.ok{background:#1a7f37} #toast.err{background:#b91c1c}
   </style>
-  <!-- dom-to-image-more (styles calculés + fonts embarqués) -->
+  <!-- dom-to-image-more : sérialise les styles calculés (mieux que html2canvas ici) -->
   <script src="https://cdn.jsdelivr.net/npm/dom-to-image-more@3.2.0/dist/dom-to-image-more.min.js"></script>
 </head>
 <body>
@@ -43,16 +43,11 @@
   const row    = Number(params.get("row") || 0);
   const iframe = document.getElementById("view");
 
-  // Charge l’iframe avec ?row=…
+  // Charge l’iframe en propageant ?row=…
   (function initIframe(){
     const widgetUrl = new URL(WIDGET_PATH, location.href);
-    if (row) {
-      const p = new URL(widgetUrl);
-      p.searchParams.set("row", row);
-      iframe.src = p.toString();
-    } else {
-      iframe.src = widgetUrl.toString();
-    }
+    iframe.src = row ? (widgetUrl.toString() + (widgetUrl.search ? "&" : "?") + "row=" + row)
+                     : widgetUrl.toString();
   })();
 
   function toast(msg, ok=true){
@@ -65,8 +60,7 @@
 
   /************ Sélection stricte de la zone récap ************/
   function getRecapEl(doc){
-    // ID exact que tu m’as donné :
-    const el = doc.getElementById('recapitulatifZone');
+    const el = doc.getElementById('recapitulatifZone'); // ← ton ID exact
     if (el) return el;
     // fallback si l’ID change un jour :
     const h = Array.from(doc.querySelectorAll('h1,h2,h3'))
@@ -85,23 +79,14 @@
     const prevVis = btn.style.visibility; btn.style.visibility = 'hidden';
 
     try{
-      // largeur max raisonnable pour A4 (haute qualité)
-      const scale = 2; // x2 retina-like
       const dataUrl = await window.domtoimage.toPng(el, {
         bgcolor: '#ffffff',
-        style: { 'transform': 'none' }, // neutralise d’éventuels transforms
+        quality: 1,
         width:  el.scrollWidth,
         height: el.scrollHeight,
-        quality: 1,
-        // Filtre optionnel pour exclure d’éventuels éléments interactifs
-        filter: (node) => {
-          // exclure zone "no-print" s’il y en a
-          if (node.classList && node.classList.contains('no-print')) return false;
-          return true;
-        },
-        // taille “virtuelle” de rendu
-        imagePlaceholder: undefined,
-        cacheBust: true,
+        style: { transform:'none' },
+        filter: (node) => !(node.classList && node.classList.contains('no-print')),
+        cacheBust: true
       });
       return dataUrl;
     } finally {
@@ -128,10 +113,10 @@
         return;
       }
 
-      // 2) Envoi vers Apps Script (no-cors)
+      // 2) Envoi vers Apps Script (no-cors : on ne lit pas la réponse)
       await fetch(ENDPOINT, {
         method:'POST',
-        mode:'no-cors', // on ne lit pas la réponse ; Apps Script écrit Z/AA
+        mode:'no-cors',
         headers:{ 'Content-Type':'text/plain;charset=utf-8' },
         body: JSON.stringify({ action:'imageToPdf', row, png: pngDataUrl })
       });
