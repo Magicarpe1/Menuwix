@@ -41,7 +41,7 @@
   const row    = Number(params.get("row") || 0);
   const iframe = document.getElementById("view");
 
-  // charge l’iframe en propageant ?row=…
+  // Charge l’iframe avec ?row=…
   (function initIframe(){
     const url = new URL(WIDGET_PATH, location.href);
     if (row) url.searchParams.set("row", row);
@@ -56,80 +56,110 @@
     setTimeout(()=> t.style.display='none', 4500);
   }
 
-  // injecte dom-to-image-more DANS l’iframe (et attend qu’il soit prêt)
-  async function ensureDomToImageInIframe(){
-    // attendre l’iframe si besoin
+  // Injecte le code de capture DANS l’iframe
+  async function injectCaptureScriptIntoIframe(){
     if (!iframe.contentDocument || iframe.contentDocument.readyState === 'loading') {
       await new Promise(r => iframe.addEventListener('load', r, {once:true}));
     }
-    const win  = iframe.contentWindow;
-    const doc  = iframe.contentDocument;
-
-    if (win.domtoimage) return; // déjà présent
-
-    await new Promise((resolve, reject) => {
-      const s = doc.createElement('script');
-      s.src = DOMTOIMAGE_CDN;
-      s.onload = () => resolve();
-      s.onerror = (e) => reject(new Error('inject dom-to-image-more failed'));
-      (doc.head || doc.documentElement).appendChild(s);
-    });
-  }
-
-  // cible STRICTEMENT #recapitulatifZone
-  function getRecapEl(doc){
-    const el = doc.getElementById('recapitulatifZone');
-    return el || doc.body; // fallback ultime
-  }
-
-  async function captureRecapPNG(){
-    await ensureDomToImageInIframe();
-    const win = iframe.contentWindow;
     const doc = iframe.contentDocument;
+    const win = iframe.contentWindow;
 
-    const el = getRecapEl(doc);
-    el.scrollIntoView({block:'center'});
-
-    // masquer le bouton overlay (parent) pendant la capture
-    const btn = document.getElementById('sendBtn');
-    const prevVis = btn.style.visibility; btn.style.visibility = 'hidden';
-
-    try{
-      // appel dom-to-image **dans l’iframe**
-      const dataUrl = await win.domtoimage.toPng(el, {
-        bgcolor: '#ffffff',
-        quality: 1,
-        width:  el.scrollWidth,
-        height: el.scrollHeight,
-        style: { transform:'none' },
-        filter: node => !(node.classList && node.classList.contains('no-print')),
-        cacheBust: true
+    // 1) inject dom-to-image-more si besoin
+    if (!win.domtoimage) {
+      await new Promise((resolve, reject) => {
+        const s = doc.createElement('script');
+        s.src = DOMTOIMAGE_CDN;
+        s.onload = resolve;
+        s.onerror = () => reject(new Error('dom-to-image injection failed'));
+        (doc.head || doc.documentElement).appendChild(s);
       });
-      return dataUrl;
-    } finally {
-      btn.style.visibility = prevVis || 'visible';
+    }
+
+    // 2) inject notre worker si pas encore présent
+    if (!doc.getElementById('__capture_worker__')) {
+      const worker = doc.createElement('script');
+      worker.id = '__capture_worker__';
+      worker.type = 'text/javascript';
+      worker.text = `
+        (function(){
+          if (window.__captureReady__) return;
+          window.__captureReady__ = true;
+
+          function getRecapEl(){
+            return document.getElementById('recapitulatifZone') || document.body;
+          }
+
+          async function capture(){
+            const el = getRecapEl();
+            el.scrollIntoView({block:'center'});
+            await new Promise(r => setTimeout(r, 250));
+            const dataUrl = await window.domtoimage.toPng(el, {
+              bgcolor:'#ffffff',
+              quality:1,
+              width:el.scrollWidth,
+              height:el.scrollHeight,
+              style:{transform:'none'},
+              filter: (node)=> !(node.classList && node.classList.contains('no-print')),
+              cacheBust:true
+            });
+            return dataUrl;
+          }
+
+          window.addEventListener('message', async (ev)=>{
+            try{
+              if (!ev.data || ev.data.type !== 'CAPTURE') return;
+              const png = await capture();
+              ev.source.postMessage({ type:'CAPTURE_DONE', png }, '*');
+            }catch(e){
+              ev.source.postMessage({ type:'CAPTURE_ERR', error: String(e) }, '*');
+            }
+          });
+        })();
+      `;
+      (doc.head || doc.documentElement).appendChild(worker);
     }
   }
 
-  // envoi PNG → Apps Script (no-cors : on ne lit pas la réponse)
+  // Parent → demande CAPTURE, puis reçoit le PNG
+  async function requestPngFromIframe(){
+    await injectCaptureScriptIntoIframe();
+
+    const png = await new Promise((resolve, reject)=>{
+      const onMsg = (ev)=>{
+        if (!ev.data || !ev.data.type) return;
+        if (ev.data.type === 'CAPTURE_DONE') {
+          window.removeEventListener('message', onMsg);
+          resolve(ev.data.png);
+        }
+        if (ev.data.type === 'CAPTURE_ERR') {
+          window.removeEventListener('message', onMsg);
+          reject(new Error(ev.data.error || 'capture error'));
+        }
+      };
+      window.addEventListener('message', onMsg);
+      iframe.contentWindow.postMessage({ type:'CAPTURE' }, '*');
+      setTimeout(()=>{ window.removeEventListener('message', onMsg); reject(new Error('capture timeout')); }, 8000);
+    });
+
+    return png;
+  }
+
+  // Envoi no-cors vers Apps Script
   async function sendPdf(){
     try{
       if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
-
-      const pngDataUrl = await captureRecapPNG();
+      const pngDataUrl = await requestPngFromIframe();
       if (!pngDataUrl || !pngDataUrl.startsWith('data:image/png')) {
         toast('Capture PNG vide — vérifie #recapitulatifZone.', false);
         return;
       }
-
       await fetch(ENDPOINT, {
         method:'POST',
-        mode:'no-cors', // évite CORS ; Apps Script écrit Z/AA
+        mode:'no-cors',
         headers:{ 'Content-Type':'text/plain;charset=utf-8' },
         body: JSON.stringify({ action:'imageToPdf', row, png: pngDataUrl })
       });
-
-      toast('Envoi déclenché ✔ — vérifie la colonne Z (lien) et AA (statut).');
+      toast('Envoi déclenché ✔ — vérifie colonne Z (lien) / AA (statut).');
     }catch(err){
       console.error('sendPdf fatal:', err);
       toast('Erreur JS: ' + err.message, false);
