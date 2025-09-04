@@ -58,27 +58,25 @@
     setTimeout(()=> t.style.display='none', 4500);
   }
 
+  // Trouver la zone "récap"
   function findRecapElement(doc){
-    // IDs connus en priorité
     let el = doc.getElementById('recapPrestations') || doc.getElementById('recapitulatifZone');
     if (el) return el;
-    // Fallback : un titre contenant "RÉCAPITULATIF"
     const heads = Array.from(doc.querySelectorAll('h1,h2,h3'));
     const h = heads.find(e => /RÉCAPITULATIF/i.test((e.textContent || '').trim()));
     return h ? (h.parentElement || h) : doc.body;
   }
 
+  // Capture en PNG avec base forcée dans le DOM cloné (évite 404)
   async function captureRecapPNG(innerDoc){
     const el = findRecapElement(innerDoc);
-    // scroll vers le bloc + attendre layout
     el.scrollIntoView({block:'center'});
-    await new Promise(r => setTimeout(r, 200));
 
-    // cacher le bouton overlay du parent pendant la capture
+    // cacher le bouton overlay pendant la capture
     const btn = document.getElementById('sendBtn');
-    const prevVis = btn.style.visibility;
-    btn.style.visibility = 'hidden';
+    const prevVis = btn.style.visibility; btn.style.visibility = 'hidden';
 
+    const baseHref = innerDoc.location.href.replace(/[^\/]*$/,'');
     try{
       const canvas = await html2canvas(el, {
         backgroundColor: '#ffffff',
@@ -87,7 +85,14 @@
         allowTaint: true,
         foreignObjectRendering: true,
         windowWidth: innerDoc.documentElement.scrollWidth,
-        windowHeight: el.scrollHeight
+        windowHeight: Math.max(innerDoc.documentElement.scrollHeight, el.scrollHeight),
+        onclone: (clonedDoc) => {
+          // injecter <base> dans le DOM cloné utilisé par html2canvas
+          const head = clonedDoc.querySelector('head') || clonedDoc.documentElement;
+          const base = clonedDoc.createElement('base');
+          base.setAttribute('href', baseHref);
+          head.prepend(base);
+        }
       });
       return { dataUrl: canvas.toDataURL('image/png'), w: canvas.width, h: canvas.height };
     } finally {
@@ -95,16 +100,21 @@
     }
   }
 
-  // ====== Envoi no-cors (on ne lit pas la réponse) ======
+  // Envoi no-cors (on ne lit pas la réponse)
   async function sendPdf(){
     try{
       if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
       if (!iframe || !iframe.contentDocument){ toast("Iframe interne introuvable.", false); return; }
 
-      // 1) Capture la zone récap en PNG (dans l’IFRAME)
+      // 1) Attendre que l’iframe soit chargée si besoin
+      if (iframe.contentDocument.readyState === 'loading') {
+        await new Promise(r => iframe.addEventListener('load', r, {once:true}));
+      }
+
+      // 2) Capture la zone récap
       const { dataUrl, w, h } = await captureRecapPNG(iframe.contentDocument);
 
-      // 2) Envoi vers Apps Script (no-cors)
+      // 3) Envoi vers Apps Script (no-cors)
       await fetch(ENDPOINT, {
         method:'POST',
         mode:'no-cors',
