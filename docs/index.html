@@ -9,20 +9,15 @@
     html,body{height:100%;margin:0;background:#fff}
     #wrap{position:fixed;inset:0}
     #view{position:absolute;inset:0;border:0;width:100%;height:100%}
-    #sendBtn{
-      position:fixed; right:12px; bottom:12px; z-index:999999;
-      padding:10px 14px; border:0; border-radius:10px;
-      background:#111; color:#fff; font-weight:700; cursor:pointer;
-      box-shadow:0 6px 20px rgba(0,0,0,.18)
-    }
-    #toast{position:fixed; left:50%; bottom:20px; transform:translateX(-50%);
-      background:#111;color:#fff;padding:10px 14px;border-radius:8px;display:none;z-index:999999}
+    .btn{position:fixed; right:12px; z-index:999999; padding:10px 14px; border:0; border-radius:10px;
+         background:#111; color:#fff; font-weight:700; cursor:pointer; box-shadow:0 6px 20px rgba(0,0,0,.18)}
+    #sendBtn{bottom:12px}
+    #dlBtn{bottom:56px}
+    #toast{position:fixed; left:50%; bottom:20px; transform:translateX(-50%); background:#111;color:#fff;
+           padding:10px 14px;border-radius:8px;display:none;z-index:999999}
     #toast.ok{background:#1a7f37} #toast.err{background:#b91c1c}
   </style>
-  <!-- dom-to-image-more (récupère les styles calculés) -->
-  <script src="https://cdn.jsdelivr.net/npm/dom-to-image-more@3.2.0/dist/dom-to-image-more.min.js"></script>
-  <!-- jsPDF (générer le PDF côté client) -->
-  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+  <!-- dom-to-image-more + jsPDF chargés dans l’IFRAME (pas dans la page parente) -->
 </head>
 <body>
   <div id="wrap">
@@ -32,20 +27,22 @@
       title="Fiche Canva"></iframe>
   </div>
 
-  <button id="sendBtn">📄 Envoyer au Sheet</button>
+  <button id="dlBtn"   class="btn">📸 Télécharger PNG test</button>
+  <button id="sendBtn" class="btn">📄 Envoyer au Sheet</button>
   <div id="toast"></div>
 
   <script>
-  // ===== CONFIG =====
+  /* ===== CONFIG ===== */
   const ENDPOINT    = "https://script.google.com/macros/s/AKfycbxwaO5PB0nLuXcoLE2yZN_EX2jj-qI8VO0B25txjeuZSA0qS0I0oJuxaYo87_2OaZsi_g/exec";
   const WIDGET_PATH = "./assets/_website-element-widget.html";
   const DOMTOIMAGE_CDN = "https://cdn.jsdelivr.net/npm/dom-to-image-more@3.2.0/dist/dom-to-image-more.min.js";
+  const JSPDF_CDN      = "https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js";
 
   const params = new URLSearchParams(location.search);
   const row    = Number(params.get("row") || 0);
   const iframe = document.getElementById("view");
 
-  // charger l’iframe avec ?row=…
+  // Charger l’IFRAME avec ?row=…
   (function initIframe(){
     const url = new URL(WIDGET_PATH, location.href);
     if (row) url.searchParams.set("row", row);
@@ -60,31 +57,42 @@
     setTimeout(()=> t.style.display='none', 4500);
   }
 
-  // injecte dom-to-image + worker de capture DANS l’iframe
-  async function ensureWorkerInIframe(){
+  /* ===== Injection dans l’IFRAME ===== */
+  async function ensureLibsInIframe(){
     if (!iframe.contentDocument || iframe.contentDocument.readyState === 'loading') {
       await new Promise(r => iframe.addEventListener('load', r, {once:true}));
     }
     const win = iframe.contentWindow;
     const doc = iframe.contentDocument;
 
+    // dom-to-image
     if (!win.domtoimage) {
-      await new Promise((resolve, reject) => {
+      await new Promise((resolve, reject)=>{
         const s = doc.createElement('script');
         s.src = DOMTOIMAGE_CDN;
         s.onload = resolve;
-        s.onerror = () => reject(new Error("dom-to-image injection failed"));
+        s.onerror = ()=>reject(new Error('dom-to-image injection failed'));
+        (doc.head || doc.documentElement).appendChild(s);
+      });
+    }
+    // jsPDF
+    if (!win.jspdf) {
+      await new Promise((resolve, reject)=>{
+        const s = doc.createElement('script');
+        s.src = JSPDF_CDN;
+        s.onload = resolve;
+        s.onerror = ()=>reject(new Error('jsPDF injection failed'));
         (doc.head || doc.documentElement).appendChild(s);
       });
     }
 
+    // Worker de capture si absent
     if (!doc.getElementById('__capture_worker__')) {
       const w = doc.createElement('script');
       w.id = '__capture_worker__';
-      w.type = 'text/javascript';
       w.text = `
         (function(){
-          if (window.__capReady__) return; window.__capReady__ = true;
+          if (window.__capReady__) return; window.__capReady__=true;
 
           function getRecapEl(){ return document.getElementById('recapitulatifZone') || document.body; }
 
@@ -95,7 +103,7 @@
             return window.domtoimage.toPng(el, {
               bgcolor:'#ffffff',
               quality:1,
-              width: el.scrollWidth,
+              width:  el.scrollWidth,
               height: el.scrollHeight,
               style:{transform:'none'},
               filter:(n)=>!(n.classList && n.classList.contains('no-print')),
@@ -103,11 +111,27 @@
             });
           }
 
+          function pngToPdfDataUrl(png){
+            const { jsPDF } = window.jspdf;
+            const pdf = new jsPDF({ orientation:'p', unit:'pt', format:'a4' });
+            const margin = 34, pageW = pdf.internal.pageSize.getWidth();
+            const drawW = pageW - margin*2;
+            pdf.addImage(png, 'PNG', margin, margin, drawW, 0, undefined, 'FAST');
+            return pdf.output('datauristring'); // data:application/pdf;base64,...
+          }
+
           window.addEventListener('message', async (ev)=>{
-            if (!ev.data || ev.data.type!=='CAPTURE') return;
+            if (!ev.data || !ev.data.type) return;
             try{
-              const png = await capturePng();
-              ev.source.postMessage({ type:'CAPTURE_DONE', png }, '*');
+              if (ev.data.type==='CAPTURE_PNG'){
+                const png = await capturePng();
+                ev.source.postMessage({ type:'CAPTURE_PNG_DONE', png }, '*');
+              }
+              if (ev.data.type==='CAPTURE_PDF'){
+                const png = await capturePng();
+                const pdf = pngToPdfDataUrl(png);
+                ev.source.postMessage({ type:'CAPTURE_PDF_DONE', pdf }, '*');
+              }
             }catch(e){
               ev.source.postMessage({ type:'CAPTURE_ERR', error:String(e) }, '*');
             }
@@ -118,75 +142,46 @@
     }
   }
 
-  // demande le PNG à l’iframe (postMessage)
-  async function getPngFromIframe(){
-    await ensureWorkerInIframe();
+  async function requestFromIframe(type){
+    await ensureLibsInIframe();
     return new Promise((resolve, reject)=>{
       const onMsg = (ev)=>{
-        if (!ev.data) return;
-        if (ev.data.type==='CAPTURE_DONE'){ window.removeEventListener('message', onMsg); resolve(ev.data.png); }
-        if (ev.data.type==='CAPTURE_ERR'){  window.removeEventListener('message', onMsg); reject(new Error(ev.data.error||'capture error')); }
+        if (!ev.data || !ev.data.type) return;
+        if (ev.data.type === type + '_DONE') { window.removeEventListener('message', onMsg); resolve(ev.data[type.toLowerCase()]); }
+        if (ev.data.type === 'CAPTURE_ERR')   { window.removeEventListener('message', onMsg); reject(new Error(ev.data.error || 'capture error')); }
       };
       window.addEventListener('message', onMsg);
-      iframe.contentWindow.postMessage({ type:'CAPTURE' }, '*');
-      setTimeout(()=>{ window.removeEventListener('message', onMsg); reject(new Error('capture timeout')); }, 10000);
+      iframe.contentWindow.postMessage({ type }, '*');
+      setTimeout(()=>{ window.removeEventListener('message', onMsg); reject(new Error(type+' timeout')); }, 10000);
     });
   }
 
-  // fabrique un PDF côté client (A4 portrait) à partir du PNG
-  function buildPdfFromPng(pngDataUrl){
-    const { jsPDF } = window.jspdf;
-    // A4 portrait, unité pt
-    const pdf = new jsPDF({ orientation:'p', unit:'pt', format:'a4' });
-    const pageW = pdf.internal.pageSize.getWidth();
-    const pageH = pdf.internal.pageSize.getHeight();
-
-    // on dessine le PNG en pleine largeur utile (marges 12 mm ≈ 34 pt)
-    const margin = 34;
-    const drawW  = pageW - margin*2;
-    // hauteur : on garde le ratio (le lecteur Drive scrolle si ça dépasse)
-    pdf.addImage(pngDataUrl, 'PNG', margin, margin, drawW, 0, undefined, 'FAST');
-
-    return pdf.output('datauristring'); // "data:application/pdf;base64,...."
-  }
-
-  // envoi du PDF (base64) à Apps Script en no-cors
-  async function sendPdf(){
+  // Bouton test : télécharge le PNG pour vérifier visuellement la capture
+  document.getElementById('dlBtn').addEventListener('click', async ()=>{
     try{
-      if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
+      const png = await requestFromIframe('CAPTURE_PNG');
+      if (!png || !png.startsWith('data:image/png')) { toast('PNG vide', false); return; }
+      const a = document.createElement('a'); a.href = png; a.download = 'recap.png'; a.click();
+      toast('PNG téléchargé ✔');
+    }catch(e){ console.error(e); toast(e.message, false); }
+  });
 
-      // masquer le bouton pendant la capture
-      const btn = document.getElementById('sendBtn');
-      const prevVis = btn.style.visibility; btn.style.visibility = 'hidden';
+  // Bouton envoi : envoie le PDF côté client vers Apps Script (no-cors)
+  document.getElementById('sendBtn').addEventListener('click', async ()=>{
+    try{
+      if (!row || row < 2) { toast('Lien sans ?row=… : ouvre depuis la colonne Y.', false); return; }
+      const pdfDataUrl = await requestFromIframe('CAPTURE_PDF');
+      if (!pdfDataUrl || !/^data:application\/pdf/i.test(pdfDataUrl)) { toast('PDF vide', false); return; }
 
-      // 1) PNG depuis l’iframe
-      const png = await getPngFromIframe();
-      if (!png || !png.startsWith('data:image/png')) {
-        btn.style.visibility = prevVis || 'visible';
-        toast('Capture PNG vide — vérifie #recapitulatifZone.', false);
-        return;
-      }
-
-      // 2) PDF côté client
-      const pdfDataUrl = buildPdfFromPng(png); // "data:application/pdf;base64,..."
-
-      // 3) Envoi à Apps Script (no-cors)
       await fetch(ENDPOINT, {
         method:'POST',
         mode:'no-cors',
         headers:{ 'Content-Type':'text/plain;charset=utf-8' },
         body: JSON.stringify({ action:'savePdf', row, pdf: pdfDataUrl })
       });
-
-      btn.style.visibility = prevVis || 'visible';
-      toast('Envoi déclenché ✔ — vérifie la colonne Z (lien) et AA (statut).');
-    }catch(err){
-      console.error('sendPdf fatal:', err);
-      toast('Erreur JS: ' + err.message, false);
-    }
-  }
-
-  document.getElementById('sendBtn').addEventListener('click', sendPdf);
+      toast('Envoi déclenché ✔ — vérifie Z (lien) / AA (statut).');
+    }catch(e){ console.error(e); toast(e.message, false); }
+  });
   </script>
 </body>
 </html>
