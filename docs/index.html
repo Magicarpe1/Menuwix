@@ -59,10 +59,10 @@
   }
 
   function findRecapElement(doc){
-    // Priorité aux IDs connus
-    let el = doc.getElementById('recapitulatifZone') || doc.getElementById('recapPrestations');
+    // IDs connus en priorité
+    let el = doc.getElementById('recapPrestations') || doc.getElementById('recapitulatifZone');
     if (el) return el;
-    // Fallback : chercher un titre contenant "RÉCAPITULATIF" et remonter d’un niveau
+    // Fallback : un titre contenant "RÉCAPITULATIF"
     const heads = Array.from(doc.querySelectorAll('h1,h2,h3'));
     const h = heads.find(e => /RÉCAPITULATIF/i.test((e.textContent || '').trim()));
     return h ? (h.parentElement || h) : doc.body;
@@ -70,29 +70,41 @@
 
   async function captureRecapPNG(innerDoc){
     const el = findRecapElement(innerDoc);
+    // scroll vers le bloc + attendre layout
     el.scrollIntoView({block:'center'});
-    // Laisser le temps au layout
     await new Promise(r => setTimeout(r, 200));
-    const canvas = await html2canvas(el, {
-      backgroundColor: '#ffffff',
-      scale: 2,
-      useCORS: true,
-      allowTaint: true
-    });
-    const dataUrl = canvas.toDataURL('image/png');
-    return { dataUrl, w: canvas.width, h: canvas.height };
+
+    // cacher le bouton overlay du parent pendant la capture
+    const btn = document.getElementById('sendBtn');
+    const prevVis = btn.style.visibility;
+    btn.style.visibility = 'hidden';
+
+    try{
+      const canvas = await html2canvas(el, {
+        backgroundColor: '#ffffff',
+        scale: 2,
+        useCORS: true,
+        allowTaint: true,
+        foreignObjectRendering: true,
+        windowWidth: innerDoc.documentElement.scrollWidth,
+        windowHeight: el.scrollHeight
+      });
+      return { dataUrl: canvas.toDataURL('image/png'), w: canvas.width, h: canvas.height };
+    } finally {
+      btn.style.visibility = prevVis || 'visible';
+    }
   }
 
-  // ====== Envoi no-CORS (on ne lit pas la réponse) ======
+  // ====== Envoi no-cors (on ne lit pas la réponse) ======
   async function sendPdf(){
     try{
       if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
       if (!iframe || !iframe.contentDocument){ toast("Iframe interne introuvable.", false); return; }
 
-      // 1) Capture PNG de la zone récap
+      // 1) Capture la zone récap en PNG (dans l’IFRAME)
       const { dataUrl, w, h } = await captureRecapPNG(iframe.contentDocument);
 
-      // 2) Envoi en no-cors (Apps Script écrira Z/AA)
+      // 2) Envoi vers Apps Script (no-cors)
       await fetch(ENDPOINT, {
         method:'POST',
         mode:'no-cors',
