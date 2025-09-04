@@ -23,9 +23,9 @@
 <body>
   <div id="wrap">
     <iframe id="view"
-            src=""
-            sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
-            title="Fiche Canva"></iframe>
+      src=""
+      sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox"
+      title="Fiche Canva"></iframe>
   </div>
 
   <button id="sendBtn">📄 Envoyer au Sheet</button>
@@ -41,11 +41,12 @@
   const row    = Number(params.get("row") || 0);
   const iframe = document.getElementById("view");
 
-  // Charge l’iframe avec ?row=…
+  // charge l’iframe en propageant ?row=…
   (function initIframe(){
     const url = new URL(WIDGET_PATH, location.href);
     if (row) url.searchParams.set("row", row);
     iframe.src = url.toString();
+    console.log("[parent] iframe loading:", iframe.src);
   })();
 
   function toast(msg, ok=true){
@@ -56,49 +57,50 @@
     setTimeout(()=> t.style.display='none', 4500);
   }
 
-  // Injecte le code de capture DANS l’iframe
-  async function injectCaptureScriptIntoIframe(){
+  // attend l’iframe et injecte dom-to-image + un “worker” de capture
+  async function ensureCaptureWorkerInIframe(){
     if (!iframe.contentDocument || iframe.contentDocument.readyState === 'loading') {
       await new Promise(r => iframe.addEventListener('load', r, {once:true}));
     }
-    const doc = iframe.contentDocument;
     const win = iframe.contentWindow;
+    const doc = iframe.contentDocument;
 
-    // 1) inject dom-to-image-more si besoin
+    // 1) charge dom-to-image-more dans l’iframe
     if (!win.domtoimage) {
       await new Promise((resolve, reject) => {
         const s = doc.createElement('script');
         s.src = DOMTOIMAGE_CDN;
-        s.onload = resolve;
-        s.onerror = () => reject(new Error('dom-to-image injection failed'));
+        s.onload  = () => { console.log("[iframe] dom-to-image loaded"); resolve(); };
+        s.onerror = () => reject(new Error("dom-to-image injection failed"));
         (doc.head || doc.documentElement).appendChild(s);
       });
     }
 
-    // 2) inject notre worker si pas encore présent
+    // 2) injecte le worker de capture si absent
     if (!doc.getElementById('__capture_worker__')) {
-      const worker = doc.createElement('script');
-      worker.id = '__capture_worker__';
-      worker.type = 'text/javascript';
-      worker.text = `
+      const w = doc.createElement('script');
+      w.id = '__capture_worker__';
+      w.type = 'text/javascript';
+      w.text = `
         (function(){
           if (window.__captureReady__) return;
           window.__captureReady__ = true;
 
           function getRecapEl(){
+            // ID exact fourni : recapitulatifZone
             return document.getElementById('recapitulatifZone') || document.body;
           }
 
           async function capture(){
             const el = getRecapEl();
             el.scrollIntoView({block:'center'});
-            await new Promise(r => setTimeout(r, 250));
+            await new Promise(r => setTimeout(r, 200));
             const dataUrl = await window.domtoimage.toPng(el, {
               bgcolor:'#ffffff',
               quality:1,
-              width:el.scrollWidth,
-              height:el.scrollHeight,
-              style:{transform:'none'},
+              width:  el.scrollWidth,
+              height: el.scrollHeight,
+              style: { transform:'none' },
               filter: (node)=> !(node.classList && node.classList.contains('no-print')),
               cacheBust:true
             });
@@ -114,25 +116,28 @@
               ev.source.postMessage({ type:'CAPTURE_ERR', error: String(e) }, '*');
             }
           });
+          console.log("[iframe] capture worker ready");
         })();
       `;
-      (doc.head || doc.documentElement).appendChild(worker);
+      (doc.head || doc.documentElement).appendChild(w);
     }
   }
 
-  // Parent → demande CAPTURE, puis reçoit le PNG
+  // demande la capture au worker de l’iframe
   async function requestPngFromIframe(){
-    await injectCaptureScriptIntoIframe();
+    await ensureCaptureWorkerInIframe();
 
     const png = await new Promise((resolve, reject)=>{
       const onMsg = (ev)=>{
         if (!ev.data || !ev.data.type) return;
         if (ev.data.type === 'CAPTURE_DONE') {
           window.removeEventListener('message', onMsg);
+          console.log("[parent] CAPTURE_DONE length:", ev.data.png.length);
           resolve(ev.data.png);
         }
         if (ev.data.type === 'CAPTURE_ERR') {
           window.removeEventListener('message', onMsg);
+          console.error("[parent] CAPTURE_ERR:", ev.data.error);
           reject(new Error(ev.data.error || 'capture error'));
         }
       };
@@ -144,22 +149,35 @@
     return png;
   }
 
-  // Envoi no-cors vers Apps Script
+  // envoi PNG → Apps Script (no-cors)
   async function sendPdf(){
     try{
       if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
+
+      // masque le bouton le temps de la capture (au cas où)
+      const btn = document.getElementById('sendBtn');
+      const prevVis = btn.style.visibility;
+      btn.style.visibility = 'hidden';
+
+      // 1) récupère le PNG depuis l’iframe
       const pngDataUrl = await requestPngFromIframe();
       if (!pngDataUrl || !pngDataUrl.startsWith('data:image/png')) {
+        btn.style.visibility = prevVis || 'visible';
         toast('Capture PNG vide — vérifie #recapitulatifZone.', false);
         return;
       }
+
+      // 2) envoi vers Apps Script (no-cors)
       await fetch(ENDPOINT, {
         method:'POST',
         mode:'no-cors',
         headers:{ 'Content-Type':'text/plain;charset=utf-8' },
         body: JSON.stringify({ action:'imageToPdf', row, png: pngDataUrl })
       });
-      toast('Envoi déclenché ✔ — vérifie colonne Z (lien) / AA (statut).');
+
+      btn.style.visibility = prevVis || 'visible';
+      toast('Envoi déclenché ✔ — vérifie la colonne Z (lien) et AA (statut).');
+
     }catch(err){
       console.error('sendPdf fatal:', err);
       toast('Erreur JS: ' + err.message, false);
