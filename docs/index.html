@@ -19,6 +19,10 @@
       background:#111;color:#fff;padding:10px 14px;border-radius:8px;display:none;z-index:999999}
     #toast.ok{background:#1a7f37} #toast.err{background:#b91c1c}
   </style>
+  <!-- dom-to-image-more (récupère les styles calculés) -->
+  <script src="https://cdn.jsdelivr.net/npm/dom-to-image-more@3.2.0/dist/dom-to-image-more.min.js"></script>
+  <!-- jsPDF (générer le PDF côté client) -->
+  <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 </head>
 <body>
   <div id="wrap">
@@ -32,7 +36,7 @@
   <div id="toast"></div>
 
   <script>
-  /************ CONFIG ************/
+  // ===== CONFIG =====
   const ENDPOINT    = "https://script.google.com/macros/s/AKfycbxwaO5PB0nLuXcoLE2yZN_EX2jj-qI8VO0B25txjeuZSA0qS0I0oJuxaYo87_2OaZsi_g/exec";
   const WIDGET_PATH = "./assets/_website-element-widget.html";
   const DOMTOIMAGE_CDN = "https://cdn.jsdelivr.net/npm/dom-to-image-more@3.2.0/dist/dom-to-image-more.min.js";
@@ -41,12 +45,11 @@
   const row    = Number(params.get("row") || 0);
   const iframe = document.getElementById("view");
 
-  // charge l’iframe en propageant ?row=…
+  // charger l’iframe avec ?row=…
   (function initIframe(){
     const url = new URL(WIDGET_PATH, location.href);
     if (row) url.searchParams.set("row", row);
     iframe.src = url.toString();
-    console.log("[parent] iframe loading:", iframe.src);
   })();
 
   function toast(msg, ok=true){
@@ -57,127 +60,126 @@
     setTimeout(()=> t.style.display='none', 4500);
   }
 
-  // attend l’iframe et injecte dom-to-image + un “worker” de capture
-  async function ensureCaptureWorkerInIframe(){
+  // injecte dom-to-image + worker de capture DANS l’iframe
+  async function ensureWorkerInIframe(){
     if (!iframe.contentDocument || iframe.contentDocument.readyState === 'loading') {
       await new Promise(r => iframe.addEventListener('load', r, {once:true}));
     }
     const win = iframe.contentWindow;
     const doc = iframe.contentDocument;
 
-    // 1) charge dom-to-image-more dans l’iframe
     if (!win.domtoimage) {
       await new Promise((resolve, reject) => {
         const s = doc.createElement('script');
         s.src = DOMTOIMAGE_CDN;
-        s.onload  = () => { console.log("[iframe] dom-to-image loaded"); resolve(); };
+        s.onload = resolve;
         s.onerror = () => reject(new Error("dom-to-image injection failed"));
         (doc.head || doc.documentElement).appendChild(s);
       });
     }
 
-    // 2) injecte le worker de capture si absent
     if (!doc.getElementById('__capture_worker__')) {
       const w = doc.createElement('script');
       w.id = '__capture_worker__';
       w.type = 'text/javascript';
       w.text = `
         (function(){
-          if (window.__captureReady__) return;
-          window.__captureReady__ = true;
+          if (window.__capReady__) return; window.__capReady__ = true;
 
-          function getRecapEl(){
-            // ID exact fourni : recapitulatifZone
-            return document.getElementById('recapitulatifZone') || document.body;
-          }
+          function getRecapEl(){ return document.getElementById('recapitulatifZone') || document.body; }
 
-          async function capture(){
+          async function capturePng(){
             const el = getRecapEl();
             el.scrollIntoView({block:'center'});
-            await new Promise(r => setTimeout(r, 200));
-            const dataUrl = await window.domtoimage.toPng(el, {
+            await new Promise(r => setTimeout(r, 250));
+            return window.domtoimage.toPng(el, {
               bgcolor:'#ffffff',
               quality:1,
-              width:  el.scrollWidth,
+              width: el.scrollWidth,
               height: el.scrollHeight,
-              style: { transform:'none' },
-              filter: (node)=> !(node.classList && node.classList.contains('no-print')),
+              style:{transform:'none'},
+              filter:(n)=>!(n.classList && n.classList.contains('no-print')),
               cacheBust:true
             });
-            return dataUrl;
           }
 
           window.addEventListener('message', async (ev)=>{
+            if (!ev.data || ev.data.type!=='CAPTURE') return;
             try{
-              if (!ev.data || ev.data.type !== 'CAPTURE') return;
-              const png = await capture();
+              const png = await capturePng();
               ev.source.postMessage({ type:'CAPTURE_DONE', png }, '*');
             }catch(e){
-              ev.source.postMessage({ type:'CAPTURE_ERR', error: String(e) }, '*');
+              ev.source.postMessage({ type:'CAPTURE_ERR', error:String(e) }, '*');
             }
           });
-          console.log("[iframe] capture worker ready");
         })();
       `;
       (doc.head || doc.documentElement).appendChild(w);
     }
   }
 
-  // demande la capture au worker de l’iframe
-  async function requestPngFromIframe(){
-    await ensureCaptureWorkerInIframe();
-
-    const png = await new Promise((resolve, reject)=>{
+  // demande le PNG à l’iframe (postMessage)
+  async function getPngFromIframe(){
+    await ensureWorkerInIframe();
+    return new Promise((resolve, reject)=>{
       const onMsg = (ev)=>{
-        if (!ev.data || !ev.data.type) return;
-        if (ev.data.type === 'CAPTURE_DONE') {
-          window.removeEventListener('message', onMsg);
-          console.log("[parent] CAPTURE_DONE length:", ev.data.png.length);
-          resolve(ev.data.png);
-        }
-        if (ev.data.type === 'CAPTURE_ERR') {
-          window.removeEventListener('message', onMsg);
-          console.error("[parent] CAPTURE_ERR:", ev.data.error);
-          reject(new Error(ev.data.error || 'capture error'));
-        }
+        if (!ev.data) return;
+        if (ev.data.type==='CAPTURE_DONE'){ window.removeEventListener('message', onMsg); resolve(ev.data.png); }
+        if (ev.data.type==='CAPTURE_ERR'){  window.removeEventListener('message', onMsg); reject(new Error(ev.data.error||'capture error')); }
       };
       window.addEventListener('message', onMsg);
       iframe.contentWindow.postMessage({ type:'CAPTURE' }, '*');
-      setTimeout(()=>{ window.removeEventListener('message', onMsg); reject(new Error('capture timeout')); }, 8000);
+      setTimeout(()=>{ window.removeEventListener('message', onMsg); reject(new Error('capture timeout')); }, 10000);
     });
-
-    return png;
   }
 
-  // envoi PNG → Apps Script (no-cors)
+  // fabrique un PDF côté client (A4 portrait) à partir du PNG
+  function buildPdfFromPng(pngDataUrl){
+    const { jsPDF } = window.jspdf;
+    // A4 portrait, unité pt
+    const pdf = new jsPDF({ orientation:'p', unit:'pt', format:'a4' });
+    const pageW = pdf.internal.pageSize.getWidth();
+    const pageH = pdf.internal.pageSize.getHeight();
+
+    // on dessine le PNG en pleine largeur utile (marges 12 mm ≈ 34 pt)
+    const margin = 34;
+    const drawW  = pageW - margin*2;
+    // hauteur : on garde le ratio (le lecteur Drive scrolle si ça dépasse)
+    pdf.addImage(pngDataUrl, 'PNG', margin, margin, drawW, 0, undefined, 'FAST');
+
+    return pdf.output('datauristring'); // "data:application/pdf;base64,...."
+  }
+
+  // envoi du PDF (base64) à Apps Script en no-cors
   async function sendPdf(){
     try{
       if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
 
-      // masque le bouton le temps de la capture (au cas où)
+      // masquer le bouton pendant la capture
       const btn = document.getElementById('sendBtn');
-      const prevVis = btn.style.visibility;
-      btn.style.visibility = 'hidden';
+      const prevVis = btn.style.visibility; btn.style.visibility = 'hidden';
 
-      // 1) récupère le PNG depuis l’iframe
-      const pngDataUrl = await requestPngFromIframe();
-      if (!pngDataUrl || !pngDataUrl.startsWith('data:image/png')) {
+      // 1) PNG depuis l’iframe
+      const png = await getPngFromIframe();
+      if (!png || !png.startsWith('data:image/png')) {
         btn.style.visibility = prevVis || 'visible';
         toast('Capture PNG vide — vérifie #recapitulatifZone.', false);
         return;
       }
 
-      // 2) envoi vers Apps Script (no-cors)
+      // 2) PDF côté client
+      const pdfDataUrl = buildPdfFromPng(png); // "data:application/pdf;base64,..."
+
+      // 3) Envoi à Apps Script (no-cors)
       await fetch(ENDPOINT, {
         method:'POST',
         mode:'no-cors',
         headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action:'imageToPdf', row, png: pngDataUrl })
+        body: JSON.stringify({ action:'savePdf', row, pdf: pdfDataUrl })
       });
 
       btn.style.visibility = prevVis || 'visible';
       toast('Envoi déclenché ✔ — vérifie la colonne Z (lien) et AA (statut).');
-
     }catch(err){
       console.error('sendPdf fatal:', err);
       toast('Erreur JS: ' + err.message, false);
