@@ -19,10 +19,11 @@
       background:#111;color:#fff;padding:10px 14px;border-radius:8px;display:none;z-index:999999}
     #toast.ok{background:#1a7f37} #toast.err{background:#b91c1c}
   </style>
+  <!-- html2canvas -->
+  <script src="https://unpkg.com/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
 </head>
 <body>
   <div id="wrap">
-    <!-- On propage ?row=… vers le widget -->
     <iframe id="view" src="" sandbox="allow-same-origin allow-scripts allow-forms allow-popups allow-popups-to-escape-sandbox" title="Fiche Canva"></iframe>
   </div>
 
@@ -38,7 +39,7 @@
   const row = Number(params.get("row") || 0);
   const iframe = document.getElementById("view");
 
-  // Charger le widget avec ?row=…
+  // Charger l’iframe avec ?row=…
   const widgetUrl = new URL(WIDGET_PATH, location.href);
   if (row) {
     const p = new URL(widgetUrl);
@@ -57,39 +58,49 @@
     setTimeout(()=> t.style.display='none', 4500);
   }
 
-  // Snapshot (valeurs des champs incluses)
-  function snapshotInnerHtml(innerDoc){
-    let html = '<!DOCTYPE html>' + innerDoc.documentElement.outerHTML;
-    const baseHref = innerDoc.location.href.replace(/[^\/]*$/,'');
-    const inject = `
-      <base href="${baseHref}">
-      <style>
-        @page{size:A4;margin:12mm}
-        *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-      </style>
-    `;
-    if (html.includes('</head>')) html = html.replace('</head>', inject + '</head>');
-    return html;
+  function findRecapElement(doc){
+    // Priorité aux IDs connus
+    let el = doc.getElementById('recapitulatifZone') || doc.getElementById('recapPrestations');
+    if (el) return el;
+    // Fallback : chercher un titre contenant "RÉCAPITULATIF" et remonter d’un niveau
+    const heads = Array.from(doc.querySelectorAll('h1,h2,h3'));
+    const h = heads.find(e => /RÉCAPITULATIF/i.test((e.textContent || '').trim()));
+    return h ? (h.parentElement || h) : doc.body;
   }
 
-  // Envoi en no-cors
+  async function captureRecapPNG(innerDoc){
+    const el = findRecapElement(innerDoc);
+    el.scrollIntoView({block:'center'});
+    // Laisser le temps au layout
+    await new Promise(r => setTimeout(r, 200));
+    const canvas = await html2canvas(el, {
+      backgroundColor: '#ffffff',
+      scale: 2,
+      useCORS: true,
+      allowTaint: true
+    });
+    const dataUrl = canvas.toDataURL('image/png');
+    return { dataUrl, w: canvas.width, h: canvas.height };
+  }
+
+  // ====== Envoi no-CORS (on ne lit pas la réponse) ======
   async function sendPdf(){
     try{
       if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
       if (!iframe || !iframe.contentDocument){ toast("Iframe interne introuvable.", false); return; }
 
-      // Capture HTML
-      const html = snapshotInnerHtml(iframe.contentDocument);
+      // 1) Capture PNG de la zone récap
+      const { dataUrl, w, h } = await captureRecapPNG(iframe.contentDocument);
 
-      // Envoi sans CORS (on ne peut pas lire la réponse, mais Apps Script écrit dans le Sheet)
+      // 2) Envoi en no-cors (Apps Script écrira Z/AA)
       await fetch(ENDPOINT, {
         method:'POST',
-        mode:'no-cors',  // ✅ contourne CORS
+        mode:'no-cors',
         headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action:'htmlToPdf', row, html })
+        body: JSON.stringify({ action:'imageToPdf', row, png: dataUrl, w, h })
       });
 
-      toast('Envoi déclenché ✔ — vérifie le Sheet (col. Z/AA).');
+      toast('Envoi déclenché ✔ — vérifie la colonne Z (lien) / AA (statut).');
     }catch(err){
       console.error('sendPdf fatal:', err);
       toast('Erreur JS: ' + err.message, false);
