@@ -31,7 +31,6 @@
 
   <script>
   // ====== CONFIG ======
-  // ⚠️ URL PUBLIQUE /exec (pas la version /a/macros/…)
   const ENDPOINT = "https://script.google.com/macros/s/AKfycbxwaO5PB0nLuXcoLE2yZN_EX2jj-qI8VO0B25txjeuZSA0qS0I0oJuxaYo87_2OaZsi_g/exec";
   const WIDGET_PATH = "./assets/_website-element-widget.html";
 
@@ -58,86 +57,46 @@
     setTimeout(()=> t.style.display='none', 4500);
   }
 
-  // Snapshot robuste (base + CSS impression + valeurs saisies)
+  // Snapshot (valeurs des champs incluses)
   function snapshotInnerHtml(innerDoc){
-    try{
-      let html = '<!DOCTYPE html>' + innerDoc.documentElement.outerHTML;
-      const baseHref = innerDoc.location.href.replace(/[^\/]*$/,'');
-      const inject = `
-        <base href="${baseHref}">
-        <style>
-          @page{size:A4;margin:12mm}
-          *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
-        </style>
-      `;
-      if (html.includes('</head>')) html = html.replace('</head>', inject + '</head>');
-      else html = html.replace('<html', '<html><head>'+inject+'</head>');
-
-      try{
-        const inputs = innerDoc.querySelectorAll('input,textarea,select');
-        inputs.forEach(el => {
-          if (el.tagName==='TEXTAREA') el.textContent = el.value || '';
-          else if (el.tagName==='SELECT') {
-            el.setAttribute('value', el.value || '');
-            const sel = el.options[el.selectedIndex];
-            if (sel) el.setAttribute('data-selected-text', sel.text);
-          } else {
-            el.setAttribute('value', el.value || '');
-            if (el.type==='checkbox'||el.type==='radio'){
-              if (el.checked) el.setAttribute('checked','checked'); else el.removeAttribute('checked');
-            }
-          }
-        });
-        html = '<!DOCTYPE html>' + innerDoc.documentElement.outerHTML;
-        if (html.includes('</head>')) html = html.replace('</head>', inject + '</head>');
-      }catch(e){ console.warn('Remontée des valeurs :', e); }
-
-      return html;
-    }catch(e){
-      console.error('snapshotInnerHtml error:', e);
-      return '<!DOCTYPE html>' + innerDoc.documentElement.outerHTML;
-    }
+    let html = '<!DOCTYPE html>' + innerDoc.documentElement.outerHTML;
+    const baseHref = innerDoc.location.href.replace(/[^\/]*$/,'');
+    const inject = `
+      <base href="${baseHref}">
+      <style>
+        @page{size:A4;margin:12mm}
+        *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+      </style>
+    `;
+    if (html.includes('</head>')) html = html.replace('</head>', inject + '</head>');
+    return html;
   }
 
-  // ====== Envoi vers Apps Script ======
+  // Envoi en no-cors
   async function sendPdf(){
     try{
       if (!row || row < 2) { toast('Lien sans ?row=… : ouvre la fiche depuis la colonne Y.', false); return; }
       if (!iframe || !iframe.contentDocument){ toast("Iframe interne introuvable.", false); return; }
 
-      // 1) Ping
-      try{
-        await fetch(ENDPOINT, {
-          method:'POST',
-          headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-          body: JSON.stringify({ action:'ping' })
-        });
-      }catch(err){
-        console.error('PING error:', err);
-        toast('Impossible de joindre Apps Script. Vérifie ENDPOINT /exec.', false);
-        return;
-      }
-
-      // 2) Capture HTML + baseUrl
+      // Capture HTML
       const html = snapshotInnerHtml(iframe.contentDocument);
-      const base = iframe.contentDocument.location.href.replace(/[^\/]*$/, '');
 
-      // 3) Envoi htmlToPdf
+      // Envoi sans CORS (on ne peut pas lire la réponse, mais Apps Script écrit dans le Sheet)
       await fetch(ENDPOINT, {
         method:'POST',
+        mode:'no-cors',  // ✅ contourne CORS
         headers:{ 'Content-Type':'text/plain;charset=utf-8' },
-        body: JSON.stringify({ action:'htmlToPdf', row, html, base })
+        body: JSON.stringify({ action:'htmlToPdf', row, html })
       });
 
-      // 4) Notif utilisateur
-      toast('Envoi déclenché ✔ — vérifie la colonne AA/AB (PDF généré).');
+      toast('Envoi déclenché ✔ — vérifie le Sheet (col. Z/AA).');
     }catch(err){
       console.error('sendPdf fatal:', err);
       toast('Erreur JS: ' + err.message, false);
     }
   }
 
-  document.getElementById('sendBtn').addEventListener('click', sendPdf);
+  document.getElementById("sendBtn").addEventListener("click", sendPdf);
   </script>
 </body>
 </html>
